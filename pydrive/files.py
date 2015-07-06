@@ -15,6 +15,8 @@ from .apiattr import ApiResource
 from .apiattr import ApiResourceList
 from .auth import LoadAuth
 
+import base64
+
 
 class FileNotUploadedError(RuntimeError):
   """Error trying to access metadata of file that is not uploaded."""
@@ -98,6 +100,7 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
       self.UpdateMetadata(metadata)
     elif metadata:
       self.update(metadata)
+    self.base64=False
 
   def __getitem__(self, key):
     """Overwrites manner of accessing Files resource.
@@ -134,7 +137,7 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
     if self.get('mimeType') is None:
       self['mimeType'] = 'text/plain'
 
-  def SetContentFile(self, filename):
+  def SetContentFile(self, filename, base64_auto=True):
     """Set content of this file from a file.
 
     Opens the file specified by this method.
@@ -145,11 +148,19 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
     :type filename: str.
     """
     self.content = open(filename, 'rb')
+
     if self.get('title') is None:
       self['title'] = filename
     if self.get('mimeType') is None:
       self['mimeType'] = mimetypes.guess_type(filename)[0]
+    if self['mimeType'] != 'text/plain' and base64_auto:
+      self.base64 = True
+      def read_new(size):
+        return base64.b64encode(self.content._read(size))
+      self.content._read = self.content.read
+      self.content.read = read_new
 
+    
   def GetContentString(self):
     """Get content of this file as a string.
 
@@ -228,6 +239,14 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
     else:
       self._FilesInsert(param=param)
 
+  @staticmethod
+  def patch_request_base64(req):
+      if req.body:
+        if not ("text/plain") in req.body:
+            req.body = req.body.replace("binary","base64")
+        print(req.body[:500])
+
+
   @LoadAuth
   def _FilesInsert(self, param=None):
     """Upload a new file using Files.insert().
@@ -242,7 +261,9 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
     try:
       if self.dirty['content']:
         param['media_body'] = self._BuildMediaBody()
-      metadata = self.auth.service.files().insert(**param).execute()
+      req = self.auth.service.files().insert(**param)
+      GoogleDriveFile.patch_request_base64(req)
+      metadata = req.execute()
     except errors.HttpError as error:
       raise ApiRequestError(error)
     else:
