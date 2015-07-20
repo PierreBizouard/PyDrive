@@ -24,6 +24,9 @@ class ApiAttribute(object):
 
   def __del__(self, obj=None):
     """Delete value of this attribute."""
+    if obj is None:
+        print(self)
+        return
     del obj.attr[self.name]
     if obj.dirty.get(self.name) is not None:
       del obj.dirty[self.name]
